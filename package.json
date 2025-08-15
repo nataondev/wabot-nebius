@@ -1,0 +1,21 @@
+{
+  "name": "wabot-nebius",
+  "version": "1.0.0",
+  "description": "WA Bot Nebius",
+  "main": "src/index.ts",
+  "author": "nataondev",
+  "license": "MIT",
+  "scripts": {
+    "start": "NODE_ENV=production bun run app.ts",
+    "dev": "bun run --watch app.ts",
+    "delete-db": "rm -rf db"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.18",
+    "openai": "^5.12.2",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.34"
+  }
+}
