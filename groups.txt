@@ -1,0 +1,2 @@
+# Add group IDs here, one per line (e.g. 120363023456789@g.us)
+# You can also use comments starting with #

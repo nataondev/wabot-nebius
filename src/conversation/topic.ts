@@ -1,6 +1,7 @@
 import { TOPIC_INACTIVITY_MS } from "../config";
 
-export const HARD_MARKERS = /(transfer|bayar|harga|invoice|rekening|refund|stok|order|beli)/i;
+export const HARD_MARKERS =
+  /(transfer|bayar|harga|invoice|rekening|refund|stok|order|beli)/i;
 export const CARRY_BLOCK_MARKERS = /(transfer|bayar|stok|invoice|refund)/i;
 const FOLLOWUP_HINT = /^(kalau|kalo|terus|trus|lanjut|yang itu|jam\s*\d+)/i;
 
@@ -29,5 +30,3 @@ export function guessLabel(text: string) {
   if (t.includes("refund")) return "refund";
   return "umum";
 }
-
-

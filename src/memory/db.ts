@@ -3,7 +3,9 @@ import * as fs from "fs";
 import { MAX_SUMMARIES_PER_TOPIC } from "../config";
 
 // Ensure DB directory exists
-try { fs.mkdirSync("./db", { recursive: true }); } catch {}
+try {
+  fs.mkdirSync("./db", { recursive: true });
+} catch {}
 export const db = new Database("./db/brain.db");
 db.exec("PRAGMA journal_mode = WAL");
 
@@ -43,7 +45,9 @@ CREATE TABLE IF NOT EXISTS seen (
 
 // Ensure new columns for users: name, nickname, intro_asked
 try {
-  const cols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  const cols = db.prepare("PRAGMA table_info(users)").all() as {
+    name: string;
+  }[];
   const colNames = new Set(cols.map((c) => c.name));
   if (!colNames.has("name")) {
     db.exec("ALTER TABLE users ADD COLUMN name TEXT");
@@ -57,52 +61,52 @@ try {
 } catch {}
 
 export const insertUser = db.prepare(
-  "INSERT OR IGNORE INTO users(user_id) VALUES (?)"
+  "INSERT OR IGNORE INTO users(user_id) VALUES (?)",
 );
 export const selectUser = db.prepare(
-  "SELECT user_id, name, nickname, intro_asked FROM users WHERE user_id=?"
+  "SELECT user_id, name, nickname, intro_asked FROM users WHERE user_id=?",
 );
 export const updateUserProfile = db.prepare(
-  "UPDATE users SET name=COALESCE(?, name), nickname=COALESCE(?, nickname) WHERE user_id=?"
+  "UPDATE users SET name=COALESCE(?, name), nickname=COALESCE(?, nickname) WHERE user_id=?",
 );
 export const updateIntroAsked = db.prepare(
-  "UPDATE users SET intro_asked=? WHERE user_id=?"
+  "UPDATE users SET intro_asked=? WHERE user_id=?",
 );
 export const insertTopic = db.prepare(
-  "INSERT OR REPLACE INTO topics(topic_id,user_id,created_at,last_active,label) VALUES (?,?,?,?,?)"
+  "INSERT OR REPLACE INTO topics(topic_id,user_id,created_at,last_active,label) VALUES (?,?,?,?,?)",
 );
 export const selectLatestTopic = db.prepare(
-  "SELECT * FROM topics WHERE user_id=? ORDER BY last_active DESC LIMIT 1"
+  "SELECT * FROM topics WHERE user_id=? ORDER BY last_active DESC LIMIT 1",
 );
 export const insertSummary = db.prepare(
-  "INSERT INTO summaries(topic_id,created_at,text) VALUES (?,?,?)"
+  "INSERT INTO summaries(topic_id,created_at,text) VALUES (?,?,?)",
 );
 export const selectSummaries = db.prepare(
-  "SELECT text FROM summaries WHERE topic_id=? ORDER BY created_at DESC LIMIT ?"
+  "SELECT text FROM summaries WHERE topic_id=? ORDER BY created_at DESC LIMIT ?",
 );
 export const countSummaries = db.prepare(
-  "SELECT COUNT(*) as c FROM summaries WHERE topic_id=?"
+  "SELECT COUNT(*) as c FROM summaries WHERE topic_id=?",
 );
 export const deleteOldestSummary = db.prepare(
-  "DELETE FROM summaries WHERE rowid IN (SELECT rowid FROM summaries WHERE topic_id=? ORDER BY created_at ASC LIMIT 1)"
+  "DELETE FROM summaries WHERE rowid IN (SELECT rowid FROM summaries WHERE topic_id=? ORDER BY created_at ASC LIMIT 1)",
 );
 export const getPolicy = db.prepare("SELECT json FROM policy WHERE user_id=?");
 export const insertTurn = db.prepare(
-  "INSERT INTO turns(topic_id,role,text,created_at) VALUES (?,?,?,?)"
+  "INSERT INTO turns(topic_id,role,text,created_at) VALUES (?,?,?,?)",
 );
 export const selectRecentTurns = db.prepare(
-  "SELECT role, text FROM turns WHERE topic_id=? ORDER BY created_at DESC LIMIT ?"
+  "SELECT role, text FROM turns WHERE topic_id=? ORDER BY created_at DESC LIMIT ?",
 );
 export const markSeenStmt = db.prepare(
-  "INSERT OR IGNORE INTO seen(msg_id,ts) VALUES (?,?)"
+  "INSERT OR IGNORE INTO seen(msg_id,ts) VALUES (?,?)",
 );
 export const isSeenStmt = db.prepare(
-  "SELECT 1 FROM seen WHERE msg_id=? LIMIT 1"
+  "SELECT 1 FROM seen WHERE msg_id=? LIMIT 1",
 );
 
 export function upsertPolicy(userId: string, json: any) {
   db.prepare(
-    "INSERT INTO policy(user_id,json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET json=excluded.json"
+    "INSERT INTO policy(user_id,json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET json=excluded.json",
   ).run(userId, JSON.stringify(json));
 }
 
@@ -114,7 +118,7 @@ export function newTopicId(userId: string) {
   const t = new Date();
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${userId}_${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(
-    t.getDate()
+    t.getDate(),
   )}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
 }
 
@@ -137,7 +141,7 @@ export function fetchContext(userId: string) {
     };
   const rows = selectSummaries.all(
     latest.topic_id,
-    MAX_SUMMARIES_PER_TOPIC
+    MAX_SUMMARIES_PER_TOPIC,
   ) as { text: string }[];
   const policyRow = getPolicy.get(userId) as any;
   return {
@@ -153,7 +157,11 @@ export function getUser(userId: string) {
   return row || null;
 }
 
-export function setUserProfile(userId: string, name?: string | null, nickname?: string | null) {
+export function setUserProfile(
+  userId: string,
+  name?: string | null,
+  nickname?: string | null,
+) {
   updateUserProfile.run(name ?? null, nickname ?? null, userId);
 }
 
@@ -161,12 +169,19 @@ export function setIntroAsked(userId: string, asked: boolean) {
   updateIntroAsked.run(asked ? 1 : 0, userId);
 }
 
-export function addTurn(topicId: string, role: "user" | "assistant", text: string) {
+export function addTurn(
+  topicId: string,
+  role: "user" | "assistant",
+  text: string,
+) {
   insertTurn.run(topicId, role, text, now());
 }
 
 export function fetchRecentTurns(topicId: string, limit: number) {
-  const rows = selectRecentTurns.all(topicId, limit) as { role: string; text: string }[];
+  const rows = selectRecentTurns.all(topicId, limit) as {
+    role: string;
+    text: string;
+  }[];
   return rows.reverse();
 }
 
@@ -178,5 +193,3 @@ export function isSeen(messageId: string) {
   const row = isSeenStmt.get(messageId) as any;
   return !!row;
 }
-
-

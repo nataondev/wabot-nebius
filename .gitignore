@@ -3,3 +3,6 @@ node_modules
 auth
 db
 .devdbrc
+.github/
+.vscode
+AGENTS.md
