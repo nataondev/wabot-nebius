@@ -530,7 +530,7 @@ export async function startWA() {
           quotedMessage: m.message
         } : undefined
       }, { quoted: shouldQuote ? m : undefined });
-      if (logger.isLevelEnabled?.("debug") ?? DEV) {
+      if (logger.isLevelEnabled("debug")) {
         const approxTokens = Math.round(
           messagesForLLM
             .map((m) => (typeof m.content === "string" ? m.content.length : 0))

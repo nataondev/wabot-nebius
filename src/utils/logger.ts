@@ -33,7 +33,9 @@ function write(level: Level, scope: string, message: string, meta?: unknown) {
         ? console.warn
         : level === "debug"
           ? console.debug
-          : console.log;
+          : level === "info"
+            ? console.info
+            : console.log;
 
   if (meta !== undefined) {
     handler(line, meta);
