@@ -20,11 +20,6 @@ import {
   GREETING_PHRASES,
   TYPING_KEEPALIVE_MS,
   TYPING_SAFETY_STOP_MS,
-  READING_DELAY_MS,
-  QUEUE_DELAY_MS,
-  MIN_TYPING_MS,
-  MAX_TYPING_MS,
-  ENABLE_TYPING_SIM,
 } from "../config";
 import { chatLLM, summarizeForMemory, extractNicknameLLM } from "../llm/client";
 import {
@@ -174,16 +169,34 @@ export function extractEchoGreeting(text: string): string | null {
 
 // Human-like typing simulation
 async function simulateTyping(sock: WASocket, jid: string, textLength: number) {
-  if (!ENABLE_TYPING_SIM) return;
-  const typingSpeed = 8; // chars per second
+  // Kecepatan ketik rata-rata manusia: ~5-8 karakter per detik (termasuk mikir)
+  // Pesan pendek (<50 char) -> min 2 detik
+  // Pesan panjang -> proporsional
+  const typingSpeed = 6; // chars per second
+  const minDuration = 2000;
   const idealDuration = Math.max(
-    MIN_TYPING_MS,
+    minDuration,
     (textLength / typingSpeed) * 1000,
   );
-  const finalDuration = Math.min(idealDuration, MAX_TYPING_MS);
 
-  await sock.sendPresenceUpdate("composing", jid);
-  await new Promise((r) => setTimeout(r, finalDuration));
+  // Cap maksimal agar tidak terlalu lama nunggu (misal max 15 detik untuk pesan super panjang)
+  const finalDuration = Math.min(idealDuration, 15000);
+
+  // Jika durasi panjang (> 5 detik), selipkan "pause" sebentar di tengah
+  if (finalDuration > 5000) {
+    await sock.sendPresenceUpdate("composing", jid);
+    await new Promise((r) => setTimeout(r, 3000));
+
+    await sock.sendPresenceUpdate("paused", jid); // Mikir bentar
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await sock.sendPresenceUpdate("composing", jid); // Lanjut ngetik
+    await new Promise((r) => setTimeout(r, finalDuration - 4500));
+  } else {
+    await sock.sendPresenceUpdate("composing", jid);
+    await new Promise((r) => setTimeout(r, finalDuration));
+  }
+
   await sock.sendPresenceUpdate("paused", jid);
 }
 
@@ -195,13 +208,10 @@ export async function startWA() {
     browser: Browsers.macOS("AmberBot"),
     auth: state,
     logger: pino({ level: "silent" }),
-    syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false,
-    markOnlineOnConnect: false,
   });
 
   // Global sequential queue for message processing
-  const msgQueue = new MessageQueue(QUEUE_DELAY_MS);
+  const msgQueue = new MessageQueue(1500);
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -472,7 +482,7 @@ export async function startWA() {
 
       // Jeda "Membaca" (Reading delay) sebelum mulai mengetik
       // Simulasi manusia membaca pesan masuk: 1-2 detik
-      await new Promise((r) => setTimeout(r, READING_DELAY_MS));
+      await new Promise((r) => setTimeout(r, 1500));
 
       try {
         const sendTyping = () => {
