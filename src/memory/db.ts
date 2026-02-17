@@ -104,6 +104,13 @@ export const isSeenStmt = db.prepare(
   "SELECT 1 FROM seen WHERE msg_id=? LIMIT 1",
 );
 
+const selectTopicsByUser = db.prepare(
+  "SELECT topic_id, user_id, created_at, last_active, label FROM topics WHERE user_id=? ORDER BY last_active DESC",
+);
+const updateTopicUserId = db.prepare(
+  "UPDATE topics SET user_id=? WHERE user_id=?",
+);
+
 export function upsertPolicy(userId: string, json: any) {
   db.prepare(
     "INSERT INTO policy(user_id,json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET json=excluded.json",
@@ -192,4 +199,16 @@ export function markSeen(messageId: string) {
 export function isSeen(messageId: string) {
   const row = isSeenStmt.get(messageId) as any;
   return !!row;
+}
+
+// Migration helper: re-key legacy group topics from senderId -> chatId (room id).
+// Returns true if any topic rows were moved.
+export function migrateGroupTopicsToChatId(senderId: string, chatId: string) {
+  if (!senderId || !chatId || senderId === chatId) return false;
+
+  const legacyRows = selectTopicsByUser.all(senderId) as any[];
+  if (!legacyRows || legacyRows.length === 0) return false;
+
+  updateTopicUserId.run(chatId, senderId);
+  return true;
 }

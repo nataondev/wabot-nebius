@@ -37,6 +37,7 @@ import {
   newTopicId,
   now,
   selectLatestTopic,
+  migrateGroupTopicsToChatId,
 } from "../memory/db";
 import {
   blocksCarry,
@@ -52,6 +53,8 @@ import { logger } from "../utils/logger";
 
 // state sementara untuk flow minta nama
 const pendingName = new Map<string, { ts: number }>();
+// one-shot migration guard for legacy group topic keys (senderId -> chatId)
+const migratedGroupTopicKeys = new Set<string>();
 
 export function sanitizeCandidate(
   raw: string | null | undefined,
@@ -360,7 +363,22 @@ export async function startWA() {
       else if (m.pushName) speakerName = m.pushName; // Fallback to WA Pushname
 
       // Gunakan chatId (Room) untuk topic, bukan senderId
-      const latest = selectLatestTopic.get(chatId) as any;
+      let latest = selectLatestTopic.get(chatId) as any;
+
+      // Startup/upgrade migration: legacy group topics keyed by senderId -> chatId.
+      // Run once per sender+room key and only when room has no topic yet.
+      if (isGroup && !latest) {
+        const migrationKey = `${senderId}->${chatId}`;
+        if (!migratedGroupTopicKeys.has(migrationKey)) {
+          const moved = migrateGroupTopicsToChatId(senderId, chatId);
+          migratedGroupTopicKeys.add(migrationKey);
+          if (moved) {
+            latest = selectLatestTopic.get(chatId) as any;
+            logger.info("[migration]", `Re-keyed legacy topics ${migrationKey}`);
+          }
+        }
+      }
+
       const ctxBefore = fetchContext(chatId);
       const newTopic = shouldCreateNewTopic(latest, text);
       let topic = latest;
