@@ -210,6 +210,9 @@ export async function startWA() {
     version,
     browser: Browsers.macOS("AmberBot"),
     auth: state,
+    // Baileys requires a pino-compatible logger instance directly;
+    // the app-level logger (../utils/logger) is a custom wrapper and not
+    // pino-compatible, so we pass a raw pino instance here.
     logger: pino({ level: process.env.WA_LOG_LEVEL || "warn" }),
   });
 
@@ -220,11 +223,18 @@ export async function startWA() {
 
   sock.ev.on("connection.update", ({ connection, qr, lastDisconnect }) => {
     if (qr) {
-      logger.info("[wa]", "QR code diterima. Silakan scan di aplikasi WhatsApp:");
+      logger.info(
+        "[wa]",
+        "QR code diterima. Silakan scan di aplikasi WhatsApp:",
+      );
       try {
         qrcode.generate(qr, { small: true });
       } catch (e) {
-        logger.warn("[wa]", "Gagal merender QR di terminal. Gunakan string ini:", qr);
+        logger.warn(
+          "[wa]",
+          "Gagal merender QR di terminal. Gunakan string ini:",
+          qr,
+        );
       }
     }
     if (connection === "close") {
@@ -269,7 +279,9 @@ export async function startWA() {
 
       // Identifikasi Chat Room (Topic ID) vs Sender (User Identity)
       const chatId = jid.split("@")[0]; // ID Percakapan (Room)
-      const senderJid = isGroup ? (m.key.participant || m.participant || jid) : jid;
+      const senderJid = isGroup
+        ? m.key.participant || m.participant || jid
+        : jid;
       const senderId = senderJid ? senderJid.split("@")[0] : chatId; // ID Pengirim (Person)
 
       const text = extractMessageText(m.message).trim();
@@ -292,7 +304,8 @@ export async function startWA() {
       // Di grup, kita pakai fallback pushname/participant ID agar tidak spamming
       const userRow = getUser(senderId) as any;
       const nameEmpty = !userRow?.name || (userRow.name || "").trim() === "";
-      const nickEmpty = !userRow?.nickname || (userRow.nickname || "").trim() === "";
+      const nickEmpty =
+        !userRow?.nickname || (userRow.nickname || "").trim() === "";
       const noIdentity = nameEmpty && nickEmpty;
 
       if (!isGroup && noIdentity) {
@@ -374,7 +387,10 @@ export async function startWA() {
           migratedGroupTopicKeys.add(migrationKey);
           if (moved) {
             latest = selectLatestTopic.get(chatId) as any;
-            logger.info("[migration]", `Re-keyed legacy topics ${migrationKey}`);
+            logger.info(
+              "[migration]",
+              `Re-keyed legacy topics ${migrationKey}`,
+            );
           }
         }
       }
@@ -421,11 +437,12 @@ export async function startWA() {
       const profile = getUser(senderId);
       const name = profile?.name?.trim();
       const nick = profile?.nickname?.trim();
-      
+
       // Inject User Context: "You are talking to [Name]"
       // Untuk grup, kita tidak inject profil spesifik di System Prompt karena campur aduk.
       // Profil akan dihandle via prefix [Name]: di user message.
-      const userSnippet = (!isGroup && (name || nick))
+      const userSnippet =
+        !isGroup && (name || nick)
           ? `\n\n[user]\nname: ${name || ""}\nnickname: ${nick || ""}`
           : "";
 
@@ -435,8 +452,8 @@ export async function startWA() {
         if (known) {
           await sock.sendMessage(jid, { text: `Namamu ${known}.` });
         } else {
-           // Di grup kalau belum kenal, jawab sopan saja
-           await sock.sendMessage(jid, { text: `Aku belum tahu namamu.` });
+          // Di grup kalau belum kenal, jawab sopan saja
+          await sock.sendMessage(jid, { text: `Aku belum tahu namamu.` });
         }
         return;
       }
@@ -469,7 +486,7 @@ export async function startWA() {
               ? { role: "user", content: t.text }
               : { role: "assistant", content: t.text },
         );
-      
+
       const contentForLLM = isGroup ? `[${speakerName}]: ${text}` : text;
 
       const messagesForLLM: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
@@ -481,7 +498,6 @@ export async function startWA() {
           ...historyMsgs,
           { role: "user", content: contentForLLM },
         ];
-
 
       let typingInterval: NodeJS.Timeout | undefined;
       let typingStopTimeout: NodeJS.Timeout | undefined;
@@ -510,7 +526,7 @@ export async function startWA() {
       // Pass available tools (checkStockTool) to the LLM
       const tools = [checkStockTool, styleResponseTool];
       const replyResult = await chatLLM(messagesForLLM, tools);
-      
+
       const reply = replyResult.text;
       const shouldQuote = replyResult.mode === "quote";
 
@@ -540,18 +556,26 @@ export async function startWA() {
       // Simulate human typing based on reply length
       await simulateTyping(sock, jid, reply.length);
 
-      await sock.sendMessage(jid, { 
-        text: reply,
-        contextInfo: shouldQuote ? {
-          stanzaId: m.key.id,
-          participant: m.key.participant || m.key.remoteJid,
-          quotedMessage: m.message
-        } : undefined
-      }, { quoted: shouldQuote ? m : undefined });
+      await sock.sendMessage(
+        jid,
+        {
+          text: reply,
+          contextInfo: shouldQuote
+            ? {
+                stanzaId: m.key.id,
+                participant: m.key.participant || m.key.remoteJid,
+                quotedMessage: m.message,
+              }
+            : undefined,
+        },
+        { quoted: shouldQuote ? m : undefined },
+      );
       if (logger.isLevelEnabled("debug")) {
         const approxTokens = Math.round(
           messagesForLLM
-            .map((m) => (typeof m.content === "string" ? m.content.length : 0))
+            .map((msg) =>
+              typeof msg.content === "string" ? msg.content.length : 0,
+            )
             .reduce((a, b) => a + b, 0) / 4,
         );
         logger.debug(
