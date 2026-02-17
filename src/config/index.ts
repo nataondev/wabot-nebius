@@ -133,6 +133,16 @@ export const TYPING_KEEPALIVE_MS =
   Number.parseInt(process.env.TYPING_KEEPALIVE_MS || "", 10) || 5000;
 export const TYPING_SAFETY_STOP_MS =
   Number.parseInt(process.env.TYPING_SAFETY_STOP_MS || "", 10) || 60000;
+export const READING_DELAY_MS =
+  Number.parseInt(process.env.READING_DELAY_MS || "", 10) || 350;
+export const QUEUE_DELAY_MS =
+  Number.parseInt(process.env.QUEUE_DELAY_MS || "", 10) || 250;
+export const MIN_TYPING_MS =
+  Number.parseInt(process.env.MIN_TYPING_MS || "", 10) || 700;
+export const MAX_TYPING_MS =
+  Number.parseInt(process.env.MAX_TYPING_MS || "", 10) || 4000;
+export const ENABLE_TYPING_SIM =
+  (process.env.ENABLE_TYPING_SIM || "true").toLowerCase() !== "false";
 
 // Frasa sapaan/obrolan ringan untuk memancing pengenalan nama
 export const GREETING_PHRASES: string[] = [
