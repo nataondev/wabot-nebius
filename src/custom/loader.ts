@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Glob } from "bun";
 import { CustomPlugin, PluginContext } from "./types";
+import { logger } from "../utils/logger";
 
 const CUSTOM_DIR = path.resolve(process.cwd(), "custom");
 
@@ -31,29 +32,30 @@ async function loadPlugins() {
           newPlugins.push(mod.default);
         }
       } catch (e) {
-        console.error(`[Custom] Failed to load plugin ${filePath}:`, e);
+        logger.error("[custom]", `Failed to load plugin ${filePath}:`, e);
       }
     }
 
     loadedPlugins = newPlugins;
-    console.log(`[Custom] Loaded ${loadedPlugins.length} plugins.`);
+    logger.info("[custom]", `Loaded ${loadedPlugins.length} plugins.`);
   } catch (e) {
-    console.error("[Custom] Error scanning plugins:", e);
+    logger.error("[custom]", "Error scanning plugins:", e);
   } finally {
     isReloading = false;
   }
 }
 
 export function startPluginWatcher() {
-  loadPlugins();
-
+  // Ensure custom directory exists before scanning for plugins
   if (!fs.existsSync(CUSTOM_DIR)) {
     fs.mkdirSync(CUSTOM_DIR, { recursive: true });
   }
 
+  loadPlugins();
+
   watcher = fs.watch(CUSTOM_DIR, { recursive: true }, (eventType, filename) => {
     if (filename && filename.endsWith(".ts")) {
-      console.log(`[Custom] Change detected: ${filename}. Reloading...`);
+      logger.info("[custom]", `Change detected: ${filename}. Reloading...`);
       setTimeout(loadPlugins, 100);
     }
   });
@@ -88,7 +90,7 @@ export async function handleCustomCommand(
         const handled = await plugin.execute(ctx);
         if (handled) return true;
       } catch (e) {
-        console.error(`[Custom] Error executing plugin ${plugin.name}:`, e);
+        logger.error("[custom]", `Error executing plugin ${plugin.name}:`, e);
       }
     }
   }

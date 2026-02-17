@@ -1,3 +1,5 @@
+import { logger } from "./logger";
+
 type Task<T> = () => Promise<T>;
 
 export class MessageQueue {
@@ -24,7 +26,7 @@ export class MessageQueue {
         try {
           await task();
         } catch (err) {
-          console.error("[Queue] Task failed:", err);
+          logger.error("[queue]", "Task failed:", err);
         }
         // Add artificial delay to mimic human behavior and prevent rate limits
         await new Promise((resolve) => setTimeout(resolve, this.delayMs));

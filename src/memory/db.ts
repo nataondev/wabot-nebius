@@ -107,8 +107,11 @@ export const isSeenStmt = db.prepare(
 const selectTopicsByUser = db.prepare(
   "SELECT topic_id, user_id, created_at, last_active, label FROM topics WHERE user_id=? ORDER BY last_active DESC",
 );
-const updateTopicUserId = db.prepare(
-  "UPDATE topics SET user_id=? WHERE user_id=?",
+// Only re-key topics whose topic_id starts with the old senderId prefix.
+// This prevents accidentally migrating private-chat topics that belong to
+// the same sender but were created outside this group context.
+const updateTopicUserIdScoped = db.prepare(
+  "UPDATE topics SET user_id=? WHERE user_id=? AND topic_id LIKE ? || '_%'",
 );
 
 export function upsertPolicy(userId: string, json: any) {
@@ -209,6 +212,14 @@ export function migrateGroupTopicsToChatId(senderId: string, chatId: string) {
   const legacyRows = selectTopicsByUser.all(senderId) as any[];
   if (!legacyRows || legacyRows.length === 0) return false;
 
-  updateTopicUserId.run(chatId, senderId);
+  updateTopicUserIdScoped.run(chatId, senderId, senderId);
   return true;
+}
+
+// Prune old entries from the `seen` table (older than 48 hours)
+const pruneSeenStmt = db.prepare("DELETE FROM seen WHERE ts < ?");
+
+export function pruneSeen() {
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000; // 48 hours ago
+  pruneSeenStmt.run(cutoff);
 }

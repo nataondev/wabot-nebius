@@ -5,6 +5,10 @@ import { TOOL_IMPLEMENTATIONS } from "../tools/inventory";
 // Flag to disable tools if model doesn't support them
 let TOOLS_SUPPORTED = true;
 
+// Maximum number of tool-call rounds before forcing a text response.
+// Prevents infinite loops when the model keeps requesting tool calls.
+const MAX_TOOL_ROUNDS = 5;
+
 export const openai = new OpenAI({
   apiKey: process.env.NEBIUS_API_KEY,
   baseURL: "https://api.studio.nebius.ai/v1/",
@@ -16,6 +20,7 @@ export async function chatLLM(
 ): Promise<{ text: string; mode?: "quote" | "general" }> {
   const maxAttempts = 3;
   let attempt = 0;
+  let toolRounds = 0;
   let responseMode: "quote" | "general" = "general";
 
   // Clone messages to avoid mutating original array during tool loop
@@ -51,8 +56,16 @@ export async function chatLLM(
 
       const msg = res.choices?.[0]?.message;
 
-      // Handle Tool Calls (Recursively)
+      // Handle Tool Calls (Recursively, with round limit)
       if (msg?.tool_calls && msg.tool_calls.length > 0) {
+        toolRounds++;
+        if (toolRounds > MAX_TOOL_ROUNDS) {
+          // Safety: force a text response to prevent infinite tool loops
+          return {
+            text: msg?.content?.trim() ?? "(maaf, lagi blank)",
+            mode: responseMode,
+          };
+        }
         // Add assistant's tool call message to history
         currentMessages.push(msg);
 
@@ -63,7 +76,7 @@ export async function chatLLM(
           if (fnName === "style_response") {
             if (fnArgs.mode === "quote") responseMode = "quote";
             if (fnArgs.mode === "general") responseMode = "general";
-            
+
             currentMessages.push({
               role: "tool",
               tool_call_id: toolCall.id,
@@ -78,10 +91,8 @@ export async function chatLLM(
           if (TOOL_IMPLEMENTATIONS[fnName]) {
             try {
               // Assuming all tools accept a single object or specific args
-              // For simplicity, we pass the first argument value if it's a single param function
-              // But standard is passing object. Our mock is (itemName) -> checkStock(itemName)
-              // Let's adjust based on schema.
-              toolResult = TOOL_IMPLEMENTATIONS[fnName](fnArgs.itemName);
+              // Pass the full arguments object to the tool implementation
+              toolResult = TOOL_IMPLEMENTATIONS[fnName](fnArgs);
             } catch (e: any) {
               toolResult = JSON.stringify({ error: e.message });
             }
@@ -143,7 +154,8 @@ export async function summarizeForMemory(history: string): Promise<string> {
     { role: "user", content: history },
   ];
   try {
-    const out = await chatLLM(prompt);
+    // Explicitly pass no tools — summarization must never trigger tool calls
+    const out = await chatLLM(prompt, []);
     return out.text;
   } catch {
     return (history || "").slice(0, 200) + " … (ringkas sementara)";

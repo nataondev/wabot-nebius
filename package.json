@@ -2,7 +2,7 @@
   "name": "wabot-nebius",
   "version": "1.0.0",
   "description": "WA Bot Nebius",
-  "main": "src/index.ts",
+  "main": "app.ts",
   "author": "nataondev",
   "license": "MIT",
   "scripts": {

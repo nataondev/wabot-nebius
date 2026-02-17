@@ -38,6 +38,7 @@ import {
   now,
   selectLatestTopic,
   migrateGroupTopicsToChatId,
+  pruneSeen,
 } from "../memory/db";
 import {
   blocksCarry,
@@ -53,8 +54,32 @@ import { logger } from "../utils/logger";
 
 // state sementara untuk flow minta nama
 const pendingName = new Map<string, { ts: number }>();
-// one-shot migration guard for legacy group topic keys (senderId -> chatId)
-const migratedGroupTopicKeys = new Set<string>();
+
+// Periodic cleanup for pendingName to prevent slow memory leak.
+// Runs every 10 minutes, removes entries older than PENDING_NAME_TTL_MS.
+setInterval(
+  () => {
+    const cutoff = Date.now();
+    for (const [key, val] of pendingName) {
+      if (cutoff - val.ts > PENDING_NAME_TTL_MS) {
+        pendingName.delete(key);
+      }
+    }
+  },
+  10 * 60 * 1000,
+);
+
+// Periodic cleanup for the `seen` table — prune entries older than 48h
+setInterval(
+  () => {
+    pruneSeen();
+  },
+  60 * 60 * 1000,
+); // every 1 hour
+
+// Singleton guard: track the active socket to prevent duplicate instances
+// during rapid reconnections.
+let activeSock: WASocket | null = null;
 
 export function sanitizeCandidate(
   raw: string | null | undefined,
@@ -204,6 +229,14 @@ async function simulateTyping(sock: WASocket, jid: string, textLength: number) {
 }
 
 export async function startWA() {
+  // Dispose previous socket to prevent duplicate listeners on reconnect
+  if (activeSock) {
+    try {
+      activeSock.end(undefined as any);
+    } catch {}
+    activeSock = null;
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState("./auth");
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
@@ -215,6 +248,8 @@ export async function startWA() {
     // pino-compatible, so we pass a raw pino instance here.
     logger: pino({ level: process.env.WA_LOG_LEVEL || "warn" }),
   });
+
+  activeSock = sock;
 
   // Global sequential queue for message processing
   const msgQueue = new MessageQueue(1500);
@@ -379,19 +414,16 @@ export async function startWA() {
       let latest = selectLatestTopic.get(chatId) as any;
 
       // Startup/upgrade migration: legacy group topics keyed by senderId -> chatId.
-      // Run once per sender+room key and only when room has no topic yet.
+      // Run only when room has no topic yet; the scoped query in db.ts
+      // ensures only topics whose ID starts with senderId are re-keyed.
       if (isGroup && !latest) {
-        const migrationKey = `${senderId}->${chatId}`;
-        if (!migratedGroupTopicKeys.has(migrationKey)) {
-          const moved = migrateGroupTopicsToChatId(senderId, chatId);
-          migratedGroupTopicKeys.add(migrationKey);
-          if (moved) {
-            latest = selectLatestTopic.get(chatId) as any;
-            logger.info(
-              "[migration]",
-              `Re-keyed legacy topics ${migrationKey}`,
-            );
-          }
+        const moved = migrateGroupTopicsToChatId(senderId, chatId);
+        if (moved) {
+          latest = selectLatestTopic.get(chatId) as any;
+          logger.info(
+            "[migration]",
+            `Re-keyed legacy topics ${senderId}->${chatId}`,
+          );
         }
       }
 

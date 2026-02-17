@@ -7,8 +7,8 @@ const INVENTORY: Record<string, { price: number; stock: number }> = {
 };
 
 // 1. Definisi Fungsi (Logic)
-export function checkStock(itemName: string) {
-  const key = itemName.toLowerCase();
+export function checkStock(args: { itemName: string }) {
+  const key = args.itemName.toLowerCase();
   const item = INVENTORY[key];
   if (!item) {
     return JSON.stringify({ error: "Barang tidak ditemukan dalam database." });
@@ -43,6 +43,7 @@ export const checkStockTool = {
 };
 
 // Registry untuk memudahkan pemanggilan string -> function
-export const TOOL_IMPLEMENTATIONS: Record<string, Function> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const TOOL_IMPLEMENTATIONS: Record<string, (args: any) => string> = {
   check_stock: checkStock,
 };
