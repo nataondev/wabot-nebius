@@ -26,18 +26,24 @@ function format(level: Level, scope: string, message: string) {
 function write(level: Level, scope: string, message: string, meta?: unknown) {
   if (!shouldLog(level)) return;
   const line = format(level, scope, message);
+  const handler =
+    level === "error"
+      ? console.error
+      : level === "warn"
+        ? console.warn
+        : level === "debug"
+          ? console.debug
+          : console.log;
+
   if (meta !== undefined) {
-    if (level === "error") console.error(line, meta);
-    else if (level === "warn") console.warn(line, meta);
-    else console.log(line, meta);
+    handler(line, meta);
     return;
   }
-  if (level === "error") console.error(line);
-  else if (level === "warn") console.warn(line);
-  else console.log(line);
+  handler(line);
 }
 
 export const logger = {
+  isLevelEnabled: (level: Level) => shouldLog(level),
   debug: (scope: string, message: string, meta?: unknown) =>
     write("debug", scope, message, meta),
   info: (scope: string, message: string, meta?: unknown) =>

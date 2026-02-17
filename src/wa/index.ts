@@ -207,7 +207,7 @@ export async function startWA() {
     version,
     browser: Browsers.macOS("AmberBot"),
     auth: state,
-    logger: pino({ level: "silent" }),
+    logger: pino({ level: process.env.WA_LOG_LEVEL || "warn" }),
   });
 
   // Global sequential queue for message processing
@@ -265,7 +265,7 @@ export async function startWA() {
       }
 
       // Identifikasi Chat Room (Topic ID) vs Sender (User Identity)
-      const chatId = isGroup ? jid.split("@")[0] : jid.split("@")[0]; // ID Percakapan (Room)
+      const chatId = jid.split("@")[0]; // ID Percakapan (Room)
       const senderJid = isGroup ? (m.key.participant || m.participant || jid) : jid;
       const senderId = senderJid ? senderJid.split("@")[0] : chatId; // ID Pengirim (Person)
 
@@ -291,18 +291,6 @@ export async function startWA() {
       const nameEmpty = !userRow?.name || (userRow.name || "").trim() === "";
       const nickEmpty = !userRow?.nickname || (userRow.nickname || "").trim() === "";
       const noIdentity = nameEmpty && nickEmpty;
-
-      // GROUP LOGIC: Skip active "ask name" flow
-      if (isGroup) {
-        // Passive learn possible here (optional), but for now just skip blocking
-      } else {
-        // PRIVATE CHAT LOGIC: Active "ask name" flow
-        if (noIdentity) {
-           // ... (existing private chat logic) ...
-           // Copy-paste existing logic here later or keep it below?
-           // To minimize diff noise, let's restructure the if (noIdentity) block
-        }
-      }
 
       if (!isGroup && noIdentity) {
         // bersihkan entry kadaluarsa
@@ -542,7 +530,7 @@ export async function startWA() {
           quotedMessage: m.message
         } : undefined
       }, { quoted: shouldQuote ? m : undefined });
-      if (DEV) {
+      if (logger.isLevelEnabled?.("debug") ?? DEV) {
         const approxTokens = Math.round(
           messagesForLLM
             .map((m) => (typeof m.content === "string" ? m.content.length : 0))
