@@ -9,6 +9,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import * as qrcode from "qrcode-terminal";
 import OpenAI from "openai";
+import pino from "pino";
 import {
   MODE,
   DEV,
@@ -19,7 +20,6 @@ import {
   GREETING_PHRASES,
   TYPING_KEEPALIVE_MS,
   TYPING_SAFETY_STOP_MS,
-  GROUP_WHITELIST,
 } from "../config";
 import { chatLLM, summarizeForMemory, extractNicknameLLM } from "../llm/client";
 import {
@@ -48,6 +48,7 @@ import { MessageQueue } from "../utils/queue";
 import { checkStockTool } from "../tools/inventory";
 import { styleResponseTool } from "../tools/style";
 import { handleCustomCommand, startPluginWatcher } from "../custom/loader";
+import { logger } from "../utils/logger";
 
 // state sementara untuk flow minta nama
 const pendingName = new Map<string, { ts: number }>();
@@ -206,6 +207,7 @@ export async function startWA() {
     version,
     browser: Browsers.macOS("AmberBot"),
     auth: state,
+    logger: pino({ level: "silent" }),
   });
 
   // Global sequential queue for message processing
@@ -215,11 +217,11 @@ export async function startWA() {
 
   sock.ev.on("connection.update", ({ connection, qr, lastDisconnect }) => {
     if (qr) {
-      console.log("QR code diterima. Silakan scan di aplikasi WhatsApp:");
+      logger.info("[wa]", "QR code diterima. Silakan scan di aplikasi WhatsApp:");
       try {
         qrcode.generate(qr, { small: true });
       } catch (e) {
-        console.log("Gagal merender QR di terminal. Gunakan string ini:", qr);
+        logger.warn("[wa]", "Gagal merender QR di terminal. Gunakan string ini:", qr);
       }
     }
     if (connection === "close") {
@@ -227,28 +229,11 @@ export async function startWA() {
         (lastDisconnect?.error as any)?.output?.statusCode ||
         (lastDisconnect as any)?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log("connection closed, reconnect=", shouldReconnect);
+      logger.warn("[wa]", `connection closed, reconnect=${shouldReconnect}`);
       if (shouldReconnect) startWA();
     } else if (connection === "open") {
-      console.log("✅ WhatsApp connected");
+      logger.info("[wa]", "✅ WhatsApp connected");
       startPluginWatcher();
-      if (DEV) {
-        // Cetak daftar grup dan whitelist saat startup untuk memudahkan konfigurasi
-        console.log(`DEV: GROUP_WHITELIST=`, GROUP_WHITELIST);
-        (async () => {
-          try {
-            const groups = await sock.groupFetchAllParticipating();
-            const entries = Object.values(groups || {});
-            console.log(`DEV: Ditemukan ${entries.length} grup:`);
-            for (const g of entries as any[]) {
-              const allowed = isGroupAllowed(g.id) ? "allowed" : "denied";
-              console.log(`- ${g.subject} :: ${g.id} [${allowed}]`);
-            }
-          } catch (e) {
-            console.log("DEV: gagal mengambil daftar grup", e);
-          }
-        })();
-      }
     }
   });
 
@@ -530,7 +515,7 @@ export async function startWA() {
       addTurn(topic.topic_id, "assistant", reply);
       insertTopic.run(
         topic.topic_id,
-        userId,
+        chatId,
         topic.created_at,
         now(),
         topic.label,
@@ -563,12 +548,13 @@ export async function startWA() {
             .map((m) => (typeof m.content === "string" ? m.content.length : 0))
             .reduce((a, b) => a + b, 0) / 4,
         );
-        console.log(
-          `[ctx] tokens~=${approxTokens}, summaries=${summariesToSend.length}, recentTurns=${recentTurns.length}, newTopic=${newTopic}`,
+        logger.debug(
+          "[ctx]",
+          `tokens~=${approxTokens}, summaries=${summariesToSend.length}, recentTurns=${recentTurns.length}, newTopic=${newTopic}`,
         );
       }
     } catch (err) {
-      console.error("handle message error", err);
+      logger.error("[wa]", "handle message error", err);
     }
   };
 

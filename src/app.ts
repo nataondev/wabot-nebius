@@ -1,9 +1,11 @@
 import { MODEL_ID } from "./config";
 import { startWA } from "./wa";
+import { logger } from "./utils/logger";
 
-console.log(`Using model: ${MODEL_ID}`);
-console.log(
-  `Using Nebius API key: ${process.env.NEBIUS_API_KEY ? "****" : "missing"}`,
+logger.info("[app]", `Model: ${MODEL_ID}`);
+logger.info(
+  "[app]",
+  `Nebius API key: ${process.env.NEBIUS_API_KEY ? "configured" : "missing"}`,
 );
 
-startWA().catch(console.error);
+startWA().catch((err) => logger.error("[app]", "Fatal startWA error", err));
