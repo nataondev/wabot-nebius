@@ -9,6 +9,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import * as qrcode from "qrcode-terminal";
 import OpenAI from "openai";
+import pino from "pino";
 import {
   MODE,
   DEV,
@@ -19,7 +20,6 @@ import {
   GREETING_PHRASES,
   TYPING_KEEPALIVE_MS,
   TYPING_SAFETY_STOP_MS,
-  GROUP_WHITELIST,
 } from "../config";
 import { chatLLM, summarizeForMemory, extractNicknameLLM } from "../llm/client";
 import {
@@ -37,6 +37,8 @@ import {
   newTopicId,
   now,
   selectLatestTopic,
+  migrateGroupTopicsToChatId,
+  pruneSeen,
 } from "../memory/db";
 import {
   blocksCarry,
@@ -48,9 +50,36 @@ import { MessageQueue } from "../utils/queue";
 import { checkStockTool } from "../tools/inventory";
 import { styleResponseTool } from "../tools/style";
 import { handleCustomCommand, startPluginWatcher } from "../custom/loader";
+import { logger } from "../utils/logger";
 
 // state sementara untuk flow minta nama
 const pendingName = new Map<string, { ts: number }>();
+
+// Periodic cleanup for pendingName to prevent slow memory leak.
+// Runs every 10 minutes, removes entries older than PENDING_NAME_TTL_MS.
+setInterval(
+  () => {
+    const cutoff = Date.now();
+    for (const [key, val] of pendingName) {
+      if (cutoff - val.ts > PENDING_NAME_TTL_MS) {
+        pendingName.delete(key);
+      }
+    }
+  },
+  10 * 60 * 1000,
+);
+
+// Periodic cleanup for the `seen` table — prune entries older than 48h
+setInterval(
+  () => {
+    pruneSeen();
+  },
+  60 * 60 * 1000,
+); // every 1 hour
+
+// Singleton guard: track the active socket to prevent duplicate instances
+// during rapid reconnections.
+let activeSock: WASocket | null = null;
 
 export function sanitizeCandidate(
   raw: string | null | undefined,
@@ -200,13 +229,27 @@ async function simulateTyping(sock: WASocket, jid: string, textLength: number) {
 }
 
 export async function startWA() {
+  // Dispose previous socket to prevent duplicate listeners on reconnect
+  if (activeSock) {
+    try {
+      activeSock.end(undefined as any);
+    } catch {}
+    activeSock = null;
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState("./auth");
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
     version,
     browser: Browsers.macOS("AmberBot"),
     auth: state,
+    // Baileys requires a pino-compatible logger instance directly;
+    // the app-level logger (../utils/logger) is a custom wrapper and not
+    // pino-compatible, so we pass a raw pino instance here.
+    logger: pino({ level: process.env.WA_LOG_LEVEL || "warn" }),
   });
+
+  activeSock = sock;
 
   // Global sequential queue for message processing
   const msgQueue = new MessageQueue(1500);
@@ -215,11 +258,18 @@ export async function startWA() {
 
   sock.ev.on("connection.update", ({ connection, qr, lastDisconnect }) => {
     if (qr) {
-      console.log("QR code diterima. Silakan scan di aplikasi WhatsApp:");
+      logger.info(
+        "[wa]",
+        "QR code diterima. Silakan scan di aplikasi WhatsApp:",
+      );
       try {
         qrcode.generate(qr, { small: true });
       } catch (e) {
-        console.log("Gagal merender QR di terminal. Gunakan string ini:", qr);
+        logger.warn(
+          "[wa]",
+          "Gagal merender QR di terminal. Gunakan string ini:",
+          qr,
+        );
       }
     }
     if (connection === "close") {
@@ -227,28 +277,11 @@ export async function startWA() {
         (lastDisconnect?.error as any)?.output?.statusCode ||
         (lastDisconnect as any)?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log("connection closed, reconnect=", shouldReconnect);
+      logger.warn("[wa]", `connection closed, reconnect=${shouldReconnect}`);
       if (shouldReconnect) startWA();
     } else if (connection === "open") {
-      console.log("✅ WhatsApp connected");
+      logger.info("[wa]", "✅ WhatsApp connected");
       startPluginWatcher();
-      if (DEV) {
-        // Cetak daftar grup dan whitelist saat startup untuk memudahkan konfigurasi
-        console.log(`DEV: GROUP_WHITELIST=`, GROUP_WHITELIST);
-        (async () => {
-          try {
-            const groups = await sock.groupFetchAllParticipating();
-            const entries = Object.values(groups || {});
-            console.log(`DEV: Ditemukan ${entries.length} grup:`);
-            for (const g of entries as any[]) {
-              const allowed = isGroupAllowed(g.id) ? "allowed" : "denied";
-              console.log(`- ${g.subject} :: ${g.id} [${allowed}]`);
-            }
-          } catch (e) {
-            console.log("DEV: gagal mengambil daftar grup", e);
-          }
-        })();
-      }
     }
   });
 
@@ -280,8 +313,10 @@ export async function startWA() {
       }
 
       // Identifikasi Chat Room (Topic ID) vs Sender (User Identity)
-      const chatId = isGroup ? jid.split("@")[0] : jid.split("@")[0]; // ID Percakapan (Room)
-      const senderJid = isGroup ? (m.key.participant || m.participant || jid) : jid;
+      const chatId = jid.split("@")[0]; // ID Percakapan (Room)
+      const senderJid = isGroup
+        ? m.key.participant || m.participant || jid
+        : jid;
       const senderId = senderJid ? senderJid.split("@")[0] : chatId; // ID Pengirim (Person)
 
       const text = extractMessageText(m.message).trim();
@@ -304,20 +339,9 @@ export async function startWA() {
       // Di grup, kita pakai fallback pushname/participant ID agar tidak spamming
       const userRow = getUser(senderId) as any;
       const nameEmpty = !userRow?.name || (userRow.name || "").trim() === "";
-      const nickEmpty = !userRow?.nickname || (userRow.nickname || "").trim() === "";
+      const nickEmpty =
+        !userRow?.nickname || (userRow.nickname || "").trim() === "";
       const noIdentity = nameEmpty && nickEmpty;
-
-      // GROUP LOGIC: Skip active "ask name" flow
-      if (isGroup) {
-        // Passive learn possible here (optional), but for now just skip blocking
-      } else {
-        // PRIVATE CHAT LOGIC: Active "ask name" flow
-        if (noIdentity) {
-           // ... (existing private chat logic) ...
-           // Copy-paste existing logic here later or keep it below?
-           // To minimize diff noise, let's restructure the if (noIdentity) block
-        }
-      }
 
       if (!isGroup && noIdentity) {
         // bersihkan entry kadaluarsa
@@ -387,7 +411,22 @@ export async function startWA() {
       else if (m.pushName) speakerName = m.pushName; // Fallback to WA Pushname
 
       // Gunakan chatId (Room) untuk topic, bukan senderId
-      const latest = selectLatestTopic.get(chatId) as any;
+      let latest = selectLatestTopic.get(chatId) as any;
+
+      // Startup/upgrade migration: legacy group topics keyed by senderId -> chatId.
+      // Run only when room has no topic yet; the scoped query in db.ts
+      // ensures only topics whose ID starts with senderId are re-keyed.
+      if (isGroup && !latest) {
+        const moved = migrateGroupTopicsToChatId(senderId, chatId);
+        if (moved) {
+          latest = selectLatestTopic.get(chatId) as any;
+          logger.info(
+            "[migration]",
+            `Re-keyed legacy topics ${senderId}->${chatId}`,
+          );
+        }
+      }
+
       const ctxBefore = fetchContext(chatId);
       const newTopic = shouldCreateNewTopic(latest, text);
       let topic = latest;
@@ -430,11 +469,12 @@ export async function startWA() {
       const profile = getUser(senderId);
       const name = profile?.name?.trim();
       const nick = profile?.nickname?.trim();
-      
+
       // Inject User Context: "You are talking to [Name]"
       // Untuk grup, kita tidak inject profil spesifik di System Prompt karena campur aduk.
       // Profil akan dihandle via prefix [Name]: di user message.
-      const userSnippet = (!isGroup && (name || nick))
+      const userSnippet =
+        !isGroup && (name || nick)
           ? `\n\n[user]\nname: ${name || ""}\nnickname: ${nick || ""}`
           : "";
 
@@ -444,8 +484,8 @@ export async function startWA() {
         if (known) {
           await sock.sendMessage(jid, { text: `Namamu ${known}.` });
         } else {
-           // Di grup kalau belum kenal, jawab sopan saja
-           await sock.sendMessage(jid, { text: `Aku belum tahu namamu.` });
+          // Di grup kalau belum kenal, jawab sopan saja
+          await sock.sendMessage(jid, { text: `Aku belum tahu namamu.` });
         }
         return;
       }
@@ -478,7 +518,7 @@ export async function startWA() {
               ? { role: "user", content: t.text }
               : { role: "assistant", content: t.text },
         );
-      
+
       const contentForLLM = isGroup ? `[${speakerName}]: ${text}` : text;
 
       const messagesForLLM: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
@@ -490,7 +530,6 @@ export async function startWA() {
           ...historyMsgs,
           { role: "user", content: contentForLLM },
         ];
-
 
       let typingInterval: NodeJS.Timeout | undefined;
       let typingStopTimeout: NodeJS.Timeout | undefined;
@@ -519,7 +558,7 @@ export async function startWA() {
       // Pass available tools (checkStockTool) to the LLM
       const tools = [checkStockTool, styleResponseTool];
       const replyResult = await chatLLM(messagesForLLM, tools);
-      
+
       const reply = replyResult.text;
       const shouldQuote = replyResult.mode === "quote";
 
@@ -530,7 +569,7 @@ export async function startWA() {
       addTurn(topic.topic_id, "assistant", reply);
       insertTopic.run(
         topic.topic_id,
-        userId,
+        chatId,
         topic.created_at,
         now(),
         topic.label,
@@ -549,26 +588,35 @@ export async function startWA() {
       // Simulate human typing based on reply length
       await simulateTyping(sock, jid, reply.length);
 
-      await sock.sendMessage(jid, { 
-        text: reply,
-        contextInfo: shouldQuote ? {
-          stanzaId: m.key.id,
-          participant: m.key.participant || m.key.remoteJid,
-          quotedMessage: m.message
-        } : undefined
-      }, { quoted: shouldQuote ? m : undefined });
-      if (DEV) {
+      await sock.sendMessage(
+        jid,
+        {
+          text: reply,
+          contextInfo: shouldQuote
+            ? {
+                stanzaId: m.key.id,
+                participant: m.key.participant || m.key.remoteJid,
+                quotedMessage: m.message,
+              }
+            : undefined,
+        },
+        { quoted: shouldQuote ? m : undefined },
+      );
+      if (logger.isLevelEnabled("debug")) {
         const approxTokens = Math.round(
           messagesForLLM
-            .map((m) => (typeof m.content === "string" ? m.content.length : 0))
+            .map((msg) =>
+              typeof msg.content === "string" ? msg.content.length : 0,
+            )
             .reduce((a, b) => a + b, 0) / 4,
         );
-        console.log(
-          `[ctx] tokens~=${approxTokens}, summaries=${summariesToSend.length}, recentTurns=${recentTurns.length}, newTopic=${newTopic}`,
+        logger.debug(
+          "[ctx]",
+          `tokens~=${approxTokens}, summaries=${summariesToSend.length}, recentTurns=${recentTurns.length}, newTopic=${newTopic}`,
         );
       }
     } catch (err) {
-      console.error("handle message error", err);
+      logger.error("[wa]", "handle message error", err);
     }
   };
 

@@ -4,7 +4,8 @@ export const MODEL_ID =
 export const SYSTEM_PROMPT = `Kamu adalah Amber, asisten milik Nata. Gaya santai, bantu user dengan jawaban ringkas, praktis, dan sopan. Jawab sebisa mungkin. Jika informasi terbatas, jelaskan asumsi singkat dan lanjutkan, jangan menolak kecuali menyangkut hal terlarang. Hindari salam pembuka berulang. Jika pertanyaan menyangkut harga, pembayaran, rekening, atau transfer, gunakan policy khusus bila tersedia di [policy].`;
 
 export const MAX_SUMMARIES_PER_TOPIC = 10;
-export const TOPIC_INACTIVITY_MS = 10 * 1000;
+export const TOPIC_INACTIVITY_MS =
+  Number.parseInt(process.env.TOPIC_INACTIVITY_MS || "", 10) || 5 * 60 * 1000;
 
 export const DEV =
   process.env.NODE_ENV !== "production" && process.env.DEV !== "false";

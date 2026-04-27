@@ -104,6 +104,16 @@ export const isSeenStmt = db.prepare(
   "SELECT 1 FROM seen WHERE msg_id=? LIMIT 1",
 );
 
+const selectTopicsByUser = db.prepare(
+  "SELECT topic_id, user_id, created_at, last_active, label FROM topics WHERE user_id=? ORDER BY last_active DESC",
+);
+// Only re-key topics whose topic_id starts with the old senderId prefix.
+// This prevents accidentally migrating private-chat topics that belong to
+// the same sender but were created outside this group context.
+const updateTopicUserIdScoped = db.prepare(
+  "UPDATE topics SET user_id=? WHERE user_id=? AND topic_id LIKE ? || '_%'",
+);
+
 export function upsertPolicy(userId: string, json: any) {
   db.prepare(
     "INSERT INTO policy(user_id,json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET json=excluded.json",
@@ -192,4 +202,24 @@ export function markSeen(messageId: string) {
 export function isSeen(messageId: string) {
   const row = isSeenStmt.get(messageId) as any;
   return !!row;
+}
+
+// Migration helper: re-key legacy group topics from senderId -> chatId (room id).
+// Returns true if any topic rows were moved.
+export function migrateGroupTopicsToChatId(senderId: string, chatId: string) {
+  if (!senderId || !chatId || senderId === chatId) return false;
+
+  const legacyRows = selectTopicsByUser.all(senderId) as any[];
+  if (!legacyRows || legacyRows.length === 0) return false;
+
+  updateTopicUserIdScoped.run(chatId, senderId, senderId);
+  return true;
+}
+
+// Prune old entries from the `seen` table (older than 48 hours)
+const pruneSeenStmt = db.prepare("DELETE FROM seen WHERE ts < ?");
+
+export function pruneSeen() {
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000; // 48 hours ago
+  pruneSeenStmt.run(cutoff);
 }
